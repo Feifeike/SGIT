@@ -1,4 +1,6 @@
 import config
+import sys
+sys.path.append("./../")
 from cldm.hack import disable_verbosity, enable_sliced_attention
 
 

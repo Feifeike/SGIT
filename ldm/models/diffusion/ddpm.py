@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint
 from torch.optim.lr_scheduler import LambdaLR
 from einops import rearrange, repeat
 from contextlib import contextmanager, nullcontext
@@ -365,15 +366,15 @@ class DDPM(pl.LightningModule):
         )
 
     def get_loss(self, pred, target, mean=True):
+        #assert mask.shape == pred.shape  # torch.Size([1, 1, 64, 64]) vs torch.Size([1, 4, 64, 64])
         if self.loss_type == 'l1':
             loss = (target - pred).abs()
             if mean:
                 loss = loss.mean()
         elif self.loss_type == 'l2':
+            loss = torch.nn.functional.mse_loss(target, pred, reduction='none')
             if mean:
-                loss = torch.nn.functional.mse_loss(target, pred)
-            else:
-                loss = torch.nn.functional.mse_loss(target, pred, reduction='none')
+                loss = loss.mean()
         else:
             raise NotImplementedError("unknown loss type '{loss_type}'")
 
@@ -765,7 +766,7 @@ class LatentDiffusion(DDPM):
 
     @torch.no_grad()
     def get_input(self, batch, k, return_first_stage_outputs=False, force_c_encode=False,
-                  cond_key=None, return_original_cond=False, bs=None, return_x=False):
+                  cond_key=None, return_original_cond=False, bs=None, return_x=False): #return_mask=False):
         x = super().get_input(batch, k)
         if bs is not None:
             x = x[:bs]
@@ -777,7 +778,7 @@ class LatentDiffusion(DDPM):
             if cond_key is None:
                 cond_key = self.cond_stage_key
             if cond_key != self.first_stage_key:
-                if cond_key in ['caption', 'coordinates_bbox', "txt"]:
+                if cond_key in ['caption', 'coordinates_bbox', "txt", "prompt"]:
                     xc = batch[cond_key]
                 elif cond_key in ['class_label', 'cls']:
                     xc = batch
@@ -806,6 +807,23 @@ class LatentDiffusion(DDPM):
             if self.use_positional_encodings:
                 pos_x, pos_y = self.compute_latent_shifts(batch)
                 c = {'pos_x': pos_x, 'pos_y': pos_y}
+
+        # mask = None
+        # if "mask" in batch: 
+        #     mask = batch["mask"]
+        #     if bs is not None:
+        #         mask = mask[:bs]
+        #     # 维度调整：从（b, H, W, 1）转为（b, 1, H, W）（通道优先）
+        #     mask = rearrange(mask, 'b h w c -> b c h w').to(self.device)
+        #     # 下采样到潜在空间尺寸（与z的h、w一致），掩码用最近邻插值避免值模糊
+        #     mask = torch.nn.functional.interpolate(
+        #         mask.float(), 
+        #         size=z.shape[2:],  # z的空间尺寸（h, w）=（H/8, W/8）
+        #         mode="nearest"
+        #     )
+        #     # 确保掩码值为0/1（避免插值后出现中间值）
+        #     mask = (mask > 0.5).float()  # 二值化（根据原始掩码的阈值调整）
+        
         out = [z, c]
         if return_first_stage_outputs:
             xrec = self.decode_first_stage(z)
@@ -814,6 +832,8 @@ class LatentDiffusion(DDPM):
             out.extend([x])
         if return_original_cond:
             out.append(xc)
+        # if return_mask:
+        #     out.append(mask)
         return out
 
     @torch.no_grad()
@@ -832,7 +852,7 @@ class LatentDiffusion(DDPM):
         return self.first_stage_model.encode(x)
 
     def shared_step(self, batch, **kwargs):
-        x, c = self.get_input(batch, self.first_stage_key)
+        x, c = self.get_input(batch, self.first_stage_key) #, return_mask=True)
         loss = self(x, c)
         return loss
 
@@ -899,7 +919,10 @@ class LatentDiffusion(DDPM):
         else:
             raise NotImplementedError()
 
+        # valid_pixels = mask.sum()  # 统计有效像素数
+
         loss_simple = self.get_loss(model_output, target, mean=False).mean([1, 2, 3])
+        # loss_dict.update({f'{prefix}/loss_simple': loss_simple.sum() / valid_pixels})
         loss_dict.update({f'{prefix}/loss_simple': loss_simple.mean()})
 
         logvar_t = self.logvar[t].to(self.device)
@@ -1349,6 +1372,38 @@ class DiffusionWrapper(pl.LightningModule):
             raise NotImplementedError()
 
         return out
+
+    def configure_callbacks(self):
+            """配置检查点回调，保存最新和最优权重"""
+            callbacks = []
+            
+            # 1. 保存最新的模型权重
+            last_ckpt = ModelCheckpoint(
+                dirpath=os.path.join(self.logger.save_dir, "checkpoints") if self.logger else "checkpoints",
+                filename="last-{epoch:02d}-{step:06d}",  # 文件名格式：包含epoch和step
+                save_last=True,  # 始终保存最新的检查点
+                save_weights_only=True,  # 只保存模型权重（不包含优化器等，减小体积）
+                verbose=True
+            )
+            callbacks.append(last_ckpt)
+            
+            # 2. 保存验证损失最低的模型权重（最优模型）
+            best_ckpt = ModelCheckpoint(
+                dirpath=os.path.join(self.logger.save_dir, "checkpoints") if self.logger else "checkpoints",
+                filename="best-{epoch:02d}-{val/loss:.4f}",  # 文件名包含损失值
+                monitor="val/loss",  # 监控验证集损失（对应你的loss_dict中的键）
+                mode="min",  # 最小化验证损失
+                save_top_k=1,  # 只保存最优的1个模型
+                save_weights_only=True,
+                verbose=True
+            )
+            callbacks.append(best_ckpt)
+            
+            # 如果已有其他回调（如ImageLogger），也可以在这里添加
+            # 例如：callbacks.append(ImageLogger(...))
+            
+            return callbacks
+
 
 
 class LatentUpscaleDiffusion(LatentDiffusion):
