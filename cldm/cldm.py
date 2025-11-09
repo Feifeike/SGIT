@@ -17,7 +17,7 @@ from ldm.modules.diffusionmodules.openaimodel import UNetModel, TimestepEmbedSeq
 from ldm.models.diffusion.ddpm import LatentDiffusion
 from ldm.util import log_txt_as_img, exists, instantiate_from_config
 from ldm.models.diffusion.ddim import DDIMSampler
-
+from sate_model.get_sate_feature import sate_forward
 
 class ControlledUnetModel(UNetModel):
     def forward(self, x, timesteps=None, context=None, control=None, only_mid_control=False, **kwargs):
@@ -279,7 +279,7 @@ class ControlNet(nn.Module):
         self._feature_size += ch
 
         self.channel_align_conv = TimestepEmbedSequential(
-            conv_nd(self.dims, model_channels * 3, model_channels, 1, padding=0),
+            conv_nd(self.dims, model_channels * 4, model_channels, 1, padding=0),
             nn.SiLU(),
             conv_nd(self.dims, model_channels, model_channels, 3, padding=1)
         )
@@ -294,32 +294,12 @@ class ControlNet(nn.Module):
         emb = self.time_embed(t_emb)
 
         guided_hint_list = []
-        for key in hint:  # k 是单个控制信号张量（如分割图 (b, C, H, W)）
+        for key in hint[:3]:  # k 是单个控制信号张量（如分割图 (b, C, H, W)）
             # 处理单个控制信号，得到该模态的特征张量
             hint_feat = self.input_hint_block(key, emb, context)
             guided_hint_list.append(hint_feat)  # 加入列表
-        
-        # # 添加深度图特征和卫星图特征的交叉注意力
-        # if len(guided_hint_list) >= 3:  # 确保有至少4个特征图
-        #     depth_feat = guided_hint_list[1]  # 深度图特征
-        #     satellite_feat = guided_hint_list[3]  # 卫星图特征
-            
-        #     # 获取特征维度
-        #     b, c, h, w = depth_feat.shape
-            
-        #     # 将特征图重塑为序列格式 (b, h*w, c)
-        #     depth_seq = rearrange(depth_feat, 'b c h w -> b (h w) c')
-        #     satellite_seq = rearrange(satellite_feat, 'b c h w -> b (h w) c')
-            
-        #     # 使用深度图特征作为查询，卫星图特征作为上下文
-        #     # 这样深度图特征产生Q，卫星图特征产生K和V
-        #     attended_satellite_seq = self.cross_attn_img(depth_seq, context=satellite_seq)
-            
-        #     # 将结果重塑回原始形状
-        #     attended_satellite = rearrange(attended_satellite_seq, 'b (h w) c -> b c h w', h=h, w=w)
-            
-        #     # 更新卫星图特征
-        #     guided_hint_list[3] = attended_satellite
+        sate_feat = sate_forward(hint[3])
+        guided_hint_list.append(sate_feat)
         
         # 修复2：将列表中的所有张量在通道维度（dim=1）拼接
         guided_hint = torch.cat(guided_hint_list, dim=1)  # 输出 (b, C1+C2+..., H, W)
@@ -409,15 +389,16 @@ class ControlLDM(LatentDiffusion):
             control = batch[key][:N].to(self.device)
             control = einops.rearrange(control, 'b h w c -> b c h w')
             control_images.append(control * 2.0 - 1.0)  # 标准化为可视化范围
-        condition_text = log_txt_as_img((512, 512), batch[self.cond_stage_key], size=16)
-        condition_text = condition_text.to(self.device)
-        # 将条件和重建图像拼接到一起
+        # condition_text = log_txt_as_img((384, 384), batch[self.cond_stage_key], size=16)
+        # condition_text = condition_text.to(self.device)
+        # # 将条件和重建图像拼接到一起
         
         # 将所有图像水平拼接
-        all_images = [reconstruction_images] + control_images + [condition_text]
+        all_images = [reconstruction_images] + control_images[:3] #+ [condition_text]
         concatenated_images = torch.cat(all_images, dim=3)  # 在宽度维度拼接
         
         log["conditions"] = concatenated_images
+        log["satellite"] = control_images[3]
 
         if plot_diffusion_rows:
             # get diffusion row
