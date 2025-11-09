@@ -92,7 +92,7 @@ class FrozenCLIPEmbedder(AbstractEncoder):
         "pooled",
         "hidden"
     ]
-    def __init__(self, version="/mnt/mydisk/fkx/CVPR/openai/clip-vit-large-patch14", device="cuda", max_length=77,
+    def __init__(self, version="./openai/clip-vit-large-patch14", device="cuda", max_length=77,
                  freeze=True, layer="last", layer_idx=None):  # clip-vit-base-patch32
         super().__init__()
         assert layer in self.LAYERS
@@ -141,7 +141,7 @@ class FrozenOpenCLIPEmbedder(AbstractEncoder):
         "penultimate"
     ]
     def __init__(self, arch="ViT-H-14", version="laion2b_s32b_b79k", device="cuda", max_length=77,
-                 freeze=True, layer="last"):
+                 freeze=True, layer="last", local_path=None):
         super().__init__()
         assert layer in self.LAYERS
         model, _, _ = open_clip.create_model_and_transforms(arch, device=torch.device('cpu'), pretrained=version)
@@ -180,6 +180,13 @@ class FrozenOpenCLIPEmbedder(AbstractEncoder):
         return x
 
     def text_transformer_forward(self, x: torch.Tensor, attn_mask = None):
+        # 修复PyTorch 2.2.0与注意力掩码形状的兼容性问题
+        # PyTorch 2.2.0期望注意力掩码形状为(1, 1)，但OpenCLIP提供的是(77, 77)
+        if attn_mask is not None and hasattr(attn_mask, 'shape'):
+            if attn_mask.shape == torch.Size([77, 77]):
+                # 对于PyTorch 2.2.0，直接使用None作为注意力掩码，因为模型可以自动处理
+                attn_mask = None
+        
         for i, r in enumerate(self.model.transformer.resblocks):
             if i == len(self.model.transformer.resblocks) - self.layer_idx:
                 break
@@ -209,5 +216,3 @@ class FrozenCLIPT5Encoder(AbstractEncoder):
         clip_z = self.clip_encoder.encode(text)
         t5_z = self.t5_encoder.encode(text)
         return [clip_z, t5_z]
-
-

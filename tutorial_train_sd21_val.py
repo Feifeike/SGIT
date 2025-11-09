@@ -18,6 +18,8 @@ def main():
     # 设置内存优化配置
     torch.backends.cuda.max_split_size_mb = 128  # 避免内存碎片
     os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:128'
+    # 启用xFormers以优化性能
+    os.environ['XFORMERS_DISABLED'] = '0'
 
     # Configs
     # resume_path = './models/control_sd21_ini.ckpt'
