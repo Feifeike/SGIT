@@ -1,7 +1,11 @@
 import torch
 import sys
-sys.path.append("/mnt/mydisk/fkx/CVPR/control_revised/sate_model")
+import os
 from mmengine.registry import Registry, build_from_cfg
+
+# 添加当前目录到路径，以便可以导入同目录下的模块
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, current_dir)
 
 from satellite2pv import Satellite2PV
 

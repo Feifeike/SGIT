@@ -22,8 +22,7 @@ def main():
     os.environ['XFORMERS_DISABLED'] = '0'
 
     # Configs
-    # resume_path = './models/control_sd21_ini.ckpt'
-    resume_path = "/mnt/mydisk/fkx/CVPR/control_revised/experiments/251107/checkpoints/last.ckpt"
+    resume_path = './models/control_sd21_ini.ckpt'
     batch_size = 1  # 每个GPU的batch_size
     logger_freq = 300
     learning_rate = 1e-5
@@ -43,34 +42,14 @@ def main():
     model.learning_rate = learning_rate
     model.sd_locked = sd_locked
     model.only_mid_control = only_mid_control
-    
-    # # 确保模型所有组件都在GPU上
-    # print("Moving model to GPU...")
-    # model = model.cuda()
-    # print("Model successfully moved to GPU")
 
     # 数据加载器配置 - 减少工作进程数以避免内存竞争
-    # dataset = MyDataset("/mnt/mydisk/fkx/CVPR/control_revised/data/infrared2color/prompt.json")
-    train_dataset = MyDataset("/mnt/mydisk/fkx/CVPR/control_revised/data/train_prompt.json")
-    val_dataset = MyDataset("/mnt/mydisk/fkx/CVPR/control_revised/data/val_prompt.json")
-    # test_dataset = MyDataset("/mnt/mydisk/fkx/CVPR/control_revised/data/test_prompt.json")
-
-
-    # # 分割训练集和验证集 (80% 训练, 20% 验证)
-    # train_size = int(0.8 * len(dataset))
-    # val_size = len(dataset) - train_size
-    # train_dataset, val_dataset = torch.utils.data.random_split(
-    #     dataset, [train_size, val_size], 
-    #     generator=torch.Generator().manual_seed(42)  # 固定随机种子保证可重复性
-    # )
+    train_dataset = MyDataset("./data_tmp/train_prompt.json")
+    val_dataset = MyDataset("./data_tmp/val_prompt.json")
     
     train_dataloader = DataLoader(train_dataset, num_workers=64, batch_size=batch_size, shuffle=True)
     val_dataloader = DataLoader(val_dataset, num_workers=64, batch_size=batch_size, shuffle=False)
     
-    # for key, value in logger_data.items():
-    #     if isinstance(value, torch.Tensor):
-    #         logger_data[key] = value.unsqueeze(0)
-    # print(logger_data)
     logger_loader = DataLoader(val_dataset, num_workers=64, batch_size=1, shuffle=False)
     logger_data = next(iter(logger_loader))
 
@@ -102,7 +81,7 @@ def main():
     # 训练器配置 - 整合所有回调（图像日志+检查点）
     trainer = pl.Trainer(
         accelerator='gpu',
-        devices=4,
+        devices=1,
         strategy='ddp',
         precision=32,  # 若显存不足，可改为16（混合精度训练）
         callbacks=[logger, last_ckpt_callback, best_ckpt_callback],  # 包含最优模型回调

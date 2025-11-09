@@ -144,7 +144,34 @@ class FrozenOpenCLIPEmbedder(AbstractEncoder):
                  freeze=True, layer="last", local_path=None):
         super().__init__()
         assert layer in self.LAYERS
-        model, _, _ = open_clip.create_model_and_transforms(arch, device=torch.device('cpu'), pretrained=version)
+        
+        # 如果提供了本地路径，优先从本地加载
+        import os
+        if local_path is not None and os.path.exists(local_path):
+            # 检查是目录还是文件
+            if os.path.isdir(local_path):
+                # 如果是目录，查找模型文件
+                model_files = [f for f in os.listdir(local_path) if f.endswith('.bin') or f.endswith('.pth')]
+                if model_files:
+                    model_file = os.path.join(local_path, model_files[0])
+                    print(f"Loading OpenCLIP model from local file: {model_file}")
+                    # 先创建空模型，然后加载权重
+                    model, _, _ = open_clip.create_model_and_transforms(arch, device=torch.device('cpu'), pretrained='')
+                    state_dict = torch.load(model_file, map_location='cpu')
+                    model.load_state_dict(state_dict)
+                else:
+                    print(f"No model files found in {local_path}, loading from online: {version}")
+                    model, _, _ = open_clip.create_model_and_transforms(arch, device=torch.device('cpu'), pretrained=version)
+            else:
+                # 如果是文件，直接加载
+                print(f"Loading OpenCLIP model from local file: {local_path}")
+                model, _, _ = open_clip.create_model_and_transforms(arch, device=torch.device('cpu'), pretrained='')
+                state_dict = torch.load(local_path, map_location='cpu')
+                model.load_state_dict(state_dict)
+        else:
+            print(f"Loading OpenCLIP model from online: {version}")
+            model, _, _ = open_clip.create_model_and_transforms(arch, device=torch.device('cpu'), pretrained=version)
+        
         del model.visual
         self.model = model
 

@@ -1,21 +1,29 @@
 import torch
 import sys
-sys.path.append("/mnt/mydisk/fkx/CVPR/control_revised/sate_model")
+import os
 import numpy as np
 
-from builder import create_model
+# 添加当前目录到路径，以便可以导入同目录下的模块
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, current_dir)
 
-# 添加项目路径
-sys.path.insert(0, '/mnt/mydisk/fkx/CVPR/control_revised/sate_model')
+# 添加性能分析器
+sys.path.append(os.path.dirname(current_dir))
+from performance_analyzer import time_module, count_parameters
+
+from builder import create_model
 
 # 全局模型实例，避免重复创建
 _sate_model = None
 
+@time_module("sate_forward")
 def sate_forward(images):
     global _sate_model
     
     if _sate_model is None:
         _sate_model = create_model('default')
+        # 统计sate模型参数量
+        count_parameters(_sate_model, "sate_model")
     
     # 确保模型与输入数据在同一个设备上
     device = images.device

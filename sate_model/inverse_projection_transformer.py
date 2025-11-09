@@ -133,6 +133,8 @@ class InverseProjectionLayer(BaseModule):
                  init_cfg=None):
         super(InverseProjectionLayer, self).__init__(init_cfg)
         
+        self.img_h = 1080
+        self.img_w = 1920
         self.hidden_channels = hidden_channels
         self.num_heads = num_heads
         self.num_pillar_in_depth = num_pillar_in_depth
@@ -233,8 +235,8 @@ class InverseProjectionLayer(BaseModule):
         
         # 1. 将归一化图像坐标映射到像素坐标
         # 图像坐标系: (u, v, d) 其中u是宽度方向，v是高度方向
-        reference_points[..., 0:1] = reference_points[..., 0:1] * W  # u: [0, W]
-        reference_points[..., 1:2] = reference_points[..., 1:2] * H  # v: [0, H] 
+        reference_points[..., 0:1] = reference_points[..., 0:1] * self.img_w   # u: [0, W]
+        reference_points[..., 1:2] = reference_points[..., 1:2] * self.img_h   # v: [0, H] 
         reference_points[..., 2:3] = reference_points[..., 2:3] * D * 1000 # d: [0, D] (深度) m ->mm
 
         # 2. 将图像坐标(u, v, d)还原到图像坐标系(x_cam, y_cam, z_cam)

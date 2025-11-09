@@ -2,6 +2,8 @@ import einops
 import torch
 import torch as th
 import torch.nn as nn
+import os
+import sys
 
 from ldm.modules.diffusionmodules.util import (
     conv_nd,
@@ -19,7 +21,13 @@ from ldm.util import log_txt_as_img, exists, instantiate_from_config
 from ldm.models.diffusion.ddim import DDIMSampler
 from sate_model.get_sate_feature import sate_forward
 
+# 添加性能分析器导入
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.dirname(current_dir))
+from performance_analyzer import time_module, count_parameters
+
 class ControlledUnetModel(UNetModel):
+    @time_module("ControlledUnetModel")
     def forward(self, x, timesteps=None, context=None, control=None, only_mid_control=False, **kwargs):
         hs = []
         with torch.no_grad():
@@ -289,6 +297,7 @@ class ControlNet(nn.Module):
     def make_zero_conv(self, channels):
         return TimestepEmbedSequential(zero_module(conv_nd(self.dims, channels, channels, 1, padding=0)))
 
+    @time_module("ControlNet")
     def forward(self, x, hint, timesteps, context, **kwargs):
         t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
         emb = self.time_embed(t_emb)
@@ -327,6 +336,10 @@ class ControlLDM(LatentDiffusion):
         self.control_keys = control_keys
         self.only_mid_control = only_mid_control
         self.control_scales = [1.0] * 13
+        
+        # 统计模型参数量
+        count_parameters(self.control_model, "ControlNet")
+        count_parameters(self.model.diffusion_model, "ControlledUnetModel")
 
     @torch.no_grad()
     def get_input(self, batch, k, bs=None, *args, **kwargs):
@@ -344,6 +357,7 @@ class ControlLDM(LatentDiffusion):
   
         return x, dict(c_crossattn=[c], c_concat=controls)
 
+    @time_module("ControlLDM_apply_model")
     def apply_model(self, x_noisy, t, cond, *args, **kwargs):
         assert isinstance(cond, dict)
         diffusion_model = self.model.diffusion_model
